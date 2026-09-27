@@ -92,6 +92,45 @@ Cada uma é um executável sem dependências. `make proof` compila e roda as tr�
   em `main()`, prova o vocabulário: o que está fora do ruleset não abre.
 - `proofs/foto.c` — snapshot vs. egress. Mostra que `/snap` rewind e `/fora` não.
 - `proofs/loop.c` — snapshot → step → restore → replay, com os tempos.
+- `proofs/README.md` — as três provas com output real e as duas armadilhas do
+  Landlock que custaram uma execução cada.
+
+## O compositor
+
+`src/lumen.c` (340 LOC) + `src/caps/{mark,probe}.c`. Lê um plano NDJSON e para
+cada passo executa `journal → fork → landlock → exec`.
+
+```
+{"lumen":"boot","abi":9,"write":"/tmp/lumen-w"}
+mark: 21 bytes em /tmp/lumen-w/transcript.log
+{"tool":"mark","status":"ok","exit":0,"effect":"internal"}
+mark: nenhuma concessao de escrita
+{"tool":"mark","status":"denied","exit":1,"effect":"internal"}
+{"tool":"shell","status":"absent"}
+```
+
+Três decisões:
+
+1. **O poder é propriedade do passo, não do binário.** O plano pede
+   `"write":true`; só então o filho recebe escrita no Landlock *e* no argv.
+   Mesmo binário, resultado diferente — porque o plano pediu diferente.
+2. **stdout do filho é descartado.** A saída é reconstruída a partir do exit
+   code. A tool pode mentir sem mudar o que o sistema acredita.
+3. **O journal é a única autoridade**, escrito antes do fork. A tool não tem
+   poder para reescrever o registro do que planejou.
+
+`shell` → `absent`: nome não montado é nome inexistente.
+
+## Armadilhas do Landlock (medidas, custaram uma execução cada)
+
+1. `O_TRUNC` exige `TRUNCATE` (ABI ≥ 6), bit **distinto** de `WRITE_FILE`. Sem
+   ele: criar novo funciona, truncar existente dá `EACCES`. A demo dava
+   "permitida" na 1ª execução e "Permission denied" na 2ª, sem mudança no código.
+2. `unlink()` exige `REMOVE_FILE`, não concedido. A limpeza falha e o `O_EXCL`
+   seguinte dá `EEXIST` — falso-negativo parecendo "arquivo já existe".
+
+Solução: path único por execução, `O_CREAT|O_EXCL`, sem estado entre execuções.
+Determinístico em 3 execuções seguidas.
 
 ## Critério de qualidade
 

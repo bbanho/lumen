@@ -1,4 +1,8 @@
+# binarios compilados (nunca versionar)
 sel
 foto
 loop
+lumen
+mark
+probe
 *.o

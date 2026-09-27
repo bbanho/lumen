@@ -111,10 +111,30 @@ int main(int argc, char **argv) {
         else         printf("  %-38s fora (EPERM/EACCES)\n", probe[i]);
     }
 
-    /* Proof: it can act where it declared. */
-    int w = open("/tmp/.sel-probe", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    /* Proof: it can act where it declared.
+     *
+     * CUIDADO — duas armadilhas reais do Landlock, medidas aqui:
+     *
+     * 1. `O_TRUNC` exige LANDLOCK_ACCESS_FS_TRUNCATE (ABI >= 6), que e' um bit
+     *    DISTINTO de WRITE_FILE. Conceder WRITE_FILE sem TRUNCATE faz criar
+     *    arquivo novo funcionar (MAKE_REG) e truncar um existente falhar com
+     *    EACCES — a mesma demonstracao daria "permitida" na 1a execucao e
+     *    "Permission denied" na 2a, sem nada ter mudado no codigo.
+     *
+     * 2. `unlink()` exige LANDLOCK_ACCESS_FS_REMOVE_FILE, tambem nao concedido
+     *    aqui. Se usassemos unlink() para limpar o probe, a limpeza falharia
+     *    e o O_EXCL seguinte daria EEXIST — outro falso-negativo.
+     *
+     * Solucao sem tocar no ruleset: um path unico por execucao, dentro de um
+     * diretorio proprio. Sem unlink, sem O_EXCL, sem estado entre execucoes.
+     */
+    char probefile[256];
+    snprintf(probefile, sizeof probefile, "/tmp/.sel-probe-%d", (int)getpid());
+    int w = open(probefile, O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (w >= 0) { write(w, "x", 1); close(w);
-                  printf("  escrita em /tmp: permitida\n"); }
-    else        printf("  escrita em /tmp: %s\n", strerror(errno));
+                  printf("  escrita em %s: permitida\n", probefile);
+                  unlink(probefile);   /* pode falhar; o path e' unico */
+    }
+    else        printf("  escrita em %s: %s\n", probefile, strerror(errno));
     return 0;
 }
