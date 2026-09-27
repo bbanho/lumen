@@ -13,30 +13,24 @@ O alvo `sel` da raiz passa o path a ler como argumento.
 **Output real medido (2026-09-26, kernel 7.1.13-200.fc44, Landlock ABI 9):**
 
 ```
-{"tool":"sel","abi":9,"vocab":["<repo>"],"status":"sealed"}
+{"tool":"sel","abi":9,"vocab":["/var/home/bruno/repos/lumen"],"status":"sealed"}
   /var/home/bruno/.hermes/.env           fora (EPERM/EACCES)
-  /var/home/bruno/repos                  DENTRO
+  /var/home/bruno/repos                  fora (EPERM/EACCES)
   /var/home/bruno/.ssh                   fora (EPERM/EACCES)
-  escrita em /tmp: permitida
+  escrita em /tmp/.sel-probe-<pid>: permitida
 ```
 
 **O que prova:** o binário declara seu vocabulário (paths permitidos) *antes*
 de qualquer lógica; o kernel enforça. Tudo fora falha com EPERM/EACCES — não
 por disciplina do código, mas por enforcement do kernel.
 
-**Duas armadilhas do Landlock, medidas e corrigidas aqui (vale registrar):**
-1. `O_TRUNC` exige `LANDLOCK_ACCESS_FS_TRUNCATE` (ABI ≥ 6), que é um bit **distinto**
-   de `WRITE_FILE`. Conceder `WRITE_FILE` sem `TRUNCATE` faz *criar* arquivo novo
-   funcionar (`MAKE_REG`) e *truncar* existente falhar com `EACCES` — a mesma
-   demonstração dá "permitida" na 1ª execução e "Permission denied" na 2ª, sem
-   nada ter mudado no código.
-2. `unlink()` exige `LANDLOCK_ACCESS_FS_REMOVE_FILE`, igualmente não concedido.
-   Limpar o probe com `unlink` falha, e o `O_EXCL` seguinte dá `EEXIST` — outro
-   falso-negativo, desta vez parecendo "arquivo já existe".
-
-Solução sem tocar no ruleset: path único por execução (`/tmp/.sel-probe-<pid>`),
-`O_CREAT|O_EXCL`, sem estado entre execuções. Determinístico em 3 execuções
-seguidas. **Não confunda flakiness com mudança de comportamento.**
+**Armadilha do Landlock, medida e corrigida aqui (vale registrar):**
+`O_TRUNC` exige `LANDLOCK_ACCESS_FS_TRUNCATE` (ABI ≥ 6), que é um bit **distinto**
+de `WRITE_FILE`. Conceder `WRITE_FILE` sem `TRUNCATE` faz *criar* arquivo novo
+funcionar (`MAKE_REG`) e *truncar* existente falhar com `EACCES` — a mesma
+demonstração dava "permitida" na 1ª execução e "Permission denied" na 2ª, sem
+nada ter mudado no código. Por isso o probe usa `O_EXCL` num nome único e é
+removido ao fim. Não confunda flakiness com mudança de comportamento.
 
 ---
 
@@ -63,11 +57,11 @@ compositor journaliza o efeito *antes* de ele acontecer.
 
 **Números medidos, 7 execuções (faixa, não número único):**
 
-| | ms/passo | total |
+| | ms/passo | total (ms) |
 |---|---|---|
-| `passo` (executar) | 0.009 – 0.017 | — |
-| `replay/passo` (re-derivar) | 0.006 – 0.010 | 1.2 – 2.7 |
-| `restore` (descartar) | — | 2.5 – 5.2 |
+| `passo` (executar) | 0.010 – 0.022 | — |
+| `replay/passo` (re-derivar) | 0.006 – 0.010 | 1.1 – 1.9 |
+| `restore` (descartar) | — | 1.29 – 2.36 |
 
 A relação que sustenta a tese: **`replay/passo < passo` em 7 de 7 execuções.**
 Refazer é mais barato que executar, e muito mais barato que descartar, porque
